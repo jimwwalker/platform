@@ -3,6 +3,7 @@
 #define CONFIG_H 1
 
 #cmakedefine HAVE_CHRONO ${HAVE_CHRONO}
+#cmakedefine HAVE_PTHREAD_SETNAME_NP 1
 
 #ifdef WIN32
 #include <winsock2.h>
