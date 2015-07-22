@@ -35,7 +35,7 @@ ELSE (WIN32)
    SET(PLATFORM_FILES src/cb_pthreads.c src/urandom.c)
    SET(THREAD_LIBS "pthread")
    SET(DLOPENLIB "dl")
-   SET_SOURCE_FILES_PROPERTIES(src/crc32c.cc PROPERTIES COMPILE_FLAGS -msse4.2)
+   SET_SOURCE_FILES_PROPERTIES(src/crc32c_sse4_2.cc PROPERTIES COMPILE_FLAGS -msse4.2)
 
    IF (NOT APPLE)
       SET(RTLIB "rt")
@@ -66,7 +66,8 @@ ADD_LIBRARY(platform SHARED ${PLATFORM_FILES}
                             src/random.cc
                             src/byteorder.c
                             src/cb_time.c
-                            src/crc32c.cc
+                            src/crc32c_sse4_2.cc
+                            src/crc32c_private.h
                             include/platform/crc32c.h
                             include/platform/platform.h
                             include/platform/random.h
@@ -90,12 +91,15 @@ ADD_EXECUTABLE(platform-crc32c-test tests/crc32c_test.cc)
 TARGET_LINK_LIBRARIES(platform-crc32c-test platform)
 
 ADD_EXECUTABLE(platform-crc32c-sw_hw-test tests/crc32c_test.cc
-                                          src/crc32c.cc)
+                                          src/crc32c.cc
+                                          src/crc32c_sse4_2.cc)
 SET_TARGET_PROPERTIES(platform-crc32c-sw_hw-test PROPERTIES COMPILE_FLAGS "-DCRC32C_UNIT_TEST")
 TARGET_LINK_LIBRARIES(platform-crc32c-sw_hw-test ${PLATFORM_LIBRARIES})
 
 ADD_EXECUTABLE(platform-crc32c-bench tests/crc32c_bench.cc
-                                     src/crc32c.cc)
+                                     src/crc32c.cc
+                                     src/crc32c_sse4_2.cc)
+
 SET_TARGET_PROPERTIES(platform-crc32c-bench PROPERTIES COMPILE_FLAGS "-DCRC32C_UNIT_TEST")
 TARGET_LINK_LIBRARIES(platform-crc32c-bench platform)
 
