@@ -19,14 +19,14 @@ static uint64_t swap64(uint64_t in) {
 #endif
 }
 
-PLATFORM_PUBLIC_API
-uint64_t ntohll(uint64_t val) {
-   return swap64(val);
-}
+//PLATFORM_PUBLIC_API
+//uint64_t ntohll(uint64_t val) {
+//   return swap64(val);
+//}
 
-PLATFORM_PUBLIC_API
-uint64_t htonll(uint64_t val) {
-   return swap64(val);
-}
+//PLATFORM_PUBLIC_API
+//uint64_t htonll(uint64_t val) {
+//   return swap64(val);
+//}
 
 #endif
