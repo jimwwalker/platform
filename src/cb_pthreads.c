@@ -263,7 +263,10 @@ int cb_rw_reader_enter(cb_rwlock_t *rw)
 {
     int result = pthread_rwlock_rdlock(rw);
     if (result != 0) {
-        fprintf(stderr, "pthread_rwlock_rdlock returned %d\n", result);
+        char buffer[64];
+        strerror_r(result, buffer, sizeof(buffer));
+        fprintf(stderr, "pthread_rwlock_rdlock returned %d (%s)\n",
+                        result, buffer);
     }
     return result;
 }
@@ -272,7 +275,10 @@ int cb_rw_reader_exit(cb_rwlock_t *rw)
 {
     int result = pthread_rwlock_unlock(rw);
     if (result != 0) {
-        fprintf(stderr, "pthread_rwlock_unlock returned %d\n", result);
+        char buffer[64];
+        strerror_r(result, buffer, sizeof(buffer));
+        fprintf(stderr, "pthread_rwlock_unlock returned %d (%s)\n",
+                        result, buffer);
     }
     return result;
 }
@@ -281,7 +287,10 @@ int cb_rw_writer_enter(cb_rwlock_t *rw)
 {
     int result = pthread_rwlock_wrlock(rw);
     if (result != 0) {
-        fprintf(stderr, "pthread_rwlock_wrlock returned %d\n", result);
+        char buffer[64];
+        strerror_r(result, buffer, sizeof(buffer));
+        fprintf(stderr, "pthread_rwlock_wrlock returned %d (%s)\n",
+                        result, buffer);
     }
     return result;
 }
@@ -290,7 +299,10 @@ int cb_rw_writer_exit(cb_rwlock_t *rw)
 {
     int result = pthread_rwlock_unlock(rw);
     if (result != 0) {
-        fprintf(stderr, "pthread_rwlock_unlock returned %d\n", result);
+        char buffer[64];
+        strerror_r(result, buffer, sizeof(buffer));
+        fprintf(stderr, "pthread_rwlock_unlock returned %d (%s)\n",
+                        result, buffer);
     }
     return result;
 }
