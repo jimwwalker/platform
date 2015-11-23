@@ -66,6 +66,7 @@ ADD_LIBRARY(platform SHARED ${PLATFORM_FILES}
                             src/random.cc
                             src/byteorder.c
                             src/cb_time.c
+                            src/crc32c.cc
                             src/crc32c_sse4_2.cc
                             src/crc32c_private.h
                             include/platform/crc32c.h
