@@ -60,6 +60,9 @@ PLATFORM_PUBLIC_API void* cb_calloc(size_t nmemb, size_t size) throwspec;
 PLATFORM_PUBLIC_API void* cb_realloc(void* ptr, size_t size) throwspec;
 PLATFORM_PUBLIC_API void cb_free(void* ptr) throwspec;
 PLATFORM_PUBLIC_API void cb_sized_free(void* ptr, size_t size) throwspec;
+PLATFORM_PUBLIC_API void cb_malloc_set_engine_index_and_arena(int index,
+                                                              int arena);
+PLATFORM_PUBLIC_API void cb_malloc_init();
 
 #if defined(HAVE_MALLOC_USABLE_SIZE)
 PLATFORM_PUBLIC_API size_t cb_malloc_usable_size(void* ptr) throwspec;

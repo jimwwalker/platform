@@ -259,7 +259,7 @@ foreach(platform ${platform_VARIANTS})
   set(platform_so ${platform}_so)
   target_sources(${platform_so} PRIVATE ${PLATFORM_FILES})
 
-  TARGET_LINK_LIBRARIES(${platform_so} PRIVATE
+  TARGET_LINK_LIBRARIES(${platform_so} PUBLIC
     platform_headers
     gsl_lite
     ${MALLOC_LIBRARIES}
