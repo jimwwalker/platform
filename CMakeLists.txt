@@ -158,6 +158,7 @@ LIST(APPEND PLATFORM_FILES
   src/random.cc
   src/byte_buffer_dump.cc
   src/byteorder.c
+  src/cb_arena_malloc.cc
   src/cb_malloc.cc
   src/cb_time.cc
   src/checked_snprintf.cc
@@ -207,6 +208,15 @@ LIST(APPEND PLATFORM_FILES
   ${Platform_BINARY_DIR}/include/platform/visibility.h
 )
 
+if (MEMORY_ALLOCATOR STREQUAL "jemalloc")
+# Build both allocators for simpler concurrent development
+LIST(APPEND PLATFORM_FILES src/je_arena_threadlocal_tracker.cc)
+LIST(APPEND PLATFORM_FILES src/je_arena_malloc.cc)
+LIST(APPEND PLATFORM_FILES src/system_arena_malloc.cc)
+else()
+LIST(APPEND PLATFORM_FILES src/system_arena_malloc.cc)
+endif()
+
 add_library(platform_cbassert SHARED
             src/backtrace.c
             src/cbassert.c
@@ -224,6 +234,14 @@ GENERATE_EXPORT_HEADER(platform_cbassert
 add_library(platform_so SHARED)
 target_link_libraries(platform_so PUBLIC ${FOLLY_LIBRARIES})
 target_link_libraries(platform_so PRIVATE phosphor)
+
+# MB-23086: Enable the faster TLS model if available, write heavy performance is
+# improved with this flag.
+check_cxx_compiler_flag(-ftls-model=initial-exec HAVE_TLS_MODEL_INITIAL_EXEC)
+if(HAVE_TLS_MODEL_INITIAL_EXEC)
+set_target_properties(platform_so
+                      PROPERTIES COMPILE_FLAGS -ftls-model=initial-exec)
+endif()
 
 # 'platform' - the library clients should normally link to.
 #
