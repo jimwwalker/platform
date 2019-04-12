@@ -159,6 +159,7 @@ LIST(APPEND PLATFORM_FILES
   src/backtrace.c
   src/byte_buffer_dump.cc
   src/byteorder.c
+  src/cb_arena_malloc.cc
   src/cb_malloc.cc
   src/cb_time.cc
   src/cbassert.c
@@ -209,6 +210,14 @@ LIST(APPEND PLATFORM_FILES
   include/platform/uuid.h
   ${Platform_BINARY_DIR}/include/platform/visibility.h
 )
+
+if (MEMORY_ALLOCATOR STREQUAL "jemalloc")
+# Build both allocators for simpler concurrent development
+LIST(APPEND PLATFORM_FILES src/je_arena_malloc.cc)
+LIST(APPEND PLATFORM_FILES src/system_arena_malloc.cc)
+else()
+LIST(APPEND PLATFORM_FILES src/system_arena_malloc.cc)
+endif()
 
 # platform_so - the 'real' platform shared library containing our various
 # platform abstraction functionality.

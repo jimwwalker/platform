@@ -15,6 +15,7 @@
  *   limitations under the License.
  */
 
+#include <platform/cb_arena_malloc.h>
 #include <platform/cb_malloc.h>
 
 #include <cstring>
@@ -35,50 +36,30 @@
 #endif
 #endif
 
+#include <string>
 
 // User-registered new and delete hooks
 cb_malloc_new_hook_t cb_new_hook = nullptr;
 cb_malloc_delete_hook_t cb_delete_hook = nullptr;
 
-// Macros to form the name of the memory allocation function to use based on
-// the compile-time selected malloc library's prefix ('je_', 'tc_', '')
-#define CONCAT(A, B) A ## B
-#define CONCAT2(A, B) CONCAT(A, B)
-#define MEM_ALLOC(name) CONCAT2(MALLOC_PREFIX, name)
-
 PLATFORM_PUBLIC_API void* cb_malloc(size_t size) throw() {
-    void* ptr = MEM_ALLOC(malloc)(size);
-    cb_invoke_new_hook(ptr, size);
-    return ptr;
+    return cb::ArenaMalloc::malloc(size);
 }
 
 PLATFORM_PUBLIC_API void* cb_calloc(size_t nmemb, size_t size) throw() {
-    void* ptr = MEM_ALLOC(calloc)(nmemb, size);
-    cb_invoke_new_hook(ptr, nmemb * size);
-    return ptr;
+    return cb::ArenaMalloc::calloc(nmemb, size);
 }
 
 PLATFORM_PUBLIC_API void* cb_realloc(void* ptr, size_t size) throw() {
-    cb_invoke_delete_hook(ptr);
-    void* result = MEM_ALLOC(realloc)(ptr, size);
-    cb_invoke_new_hook(result, size);
-    return result;
+    return cb::ArenaMalloc::realloc(ptr, size);
 }
 
 PLATFORM_PUBLIC_API void cb_free(void* ptr) throw() {
-    cb_invoke_delete_hook(ptr);
-    return MEM_ALLOC(free)(ptr);
+    cb::ArenaMalloc::free(ptr);
 }
 
 PLATFORM_PUBLIC_API void cb_sized_free(void* ptr, size_t size) throw() {
-    cb_invoke_delete_hook(ptr);
-#if defined(HAVE_JEMALLOC_SDALLOCX)
-    if (ptr != nullptr) {
-        MEM_ALLOC(sdallocx)(ptr, size, /* no flags */ 0);
-    }
-#else
-    MEM_ALLOC(free)(ptr);
-#endif
+    cb::ArenaMalloc::sized_free(ptr, size);
 }
 
 PLATFORM_PUBLIC_API char* cb_strdup(const char* s1) {
@@ -92,7 +73,7 @@ PLATFORM_PUBLIC_API char* cb_strdup(const char* s1) {
 
 #if defined(HAVE_MALLOC_USABLE_SIZE)
 PLATFORM_PUBLIC_API size_t cb_malloc_usable_size(void* ptr) throw() {
-    return MEM_ALLOC(malloc_usable_size)(ptr);
+    return cb::ArenaMalloc::malloc_usable_size(ptr);
 }
 #endif
 
