@@ -157,6 +157,7 @@ LIST(APPEND PLATFORM_FILES
   src/random.cc
   src/byte_buffer_dump.cc
   src/byteorder.c
+  src/cb_arena_malloc.cc
   src/cb_malloc.cc
   src/cb_time.cc
   src/checked_snprintf.cc
@@ -206,6 +207,7 @@ LIST(APPEND PLATFORM_FILES
   ${Platform_BINARY_DIR}/include/platform/visibility.h
 )
 
+<<<<<<< HEAD
 add_library(platform_cbassert STATIC
             src/backtrace.c
             src/cbassert.c
@@ -217,6 +219,15 @@ if (WIN32)
 target_link_libraries(platform_cbassert PRIVATE DbgHelp.lib)
 else()
 target_link_libraries(platform_cbassert PRIVATE ${CMAKE_DL_LIBS})
+=======
+if (MEMORY_ALLOCATOR STREQUAL "jemalloc")
+# Build both allocators for simpler concurrent development
+LIST(APPEND PLATFORM_FILES src/je_arena_threadlocal_tracker.cc)
+LIST(APPEND PLATFORM_FILES src/je_arena_malloc.cc)
+LIST(APPEND PLATFORM_FILES src/system_arena_malloc.cc)
+else()
+LIST(APPEND PLATFORM_FILES src/system_arena_malloc.cc)
+>>>>>>> 491c051... TLS Model Changed - Simpler malloc flags impl
 endif()
 
 # platform_so - the 'real' platform shared library containing our various
