@@ -155,6 +155,10 @@ void SystemArenaMalloc::setTCacheEnabled(bool value) {
     (void)value; // ignored
 }
 
+bool SystemArenaMalloc::releaseFreeMemory() {
+    return false;
+}
+
 void SystemArenaMalloc::addAllocation(void* ptr) {
     if (canTrackAllocations()) {
         auto client = currentClient;

@@ -211,6 +211,10 @@ public:
     static void setTCacheEnabled(bool value) {
         return Impl::setTCacheEnabled(value);
     }
+
+    static bool releaseFreeMemory() {
+        return Impl::releaseFreeMemory();
+    }
 };
 
 using ArenaMalloc = _ArenaMalloc<ARENA_ALLOC>;

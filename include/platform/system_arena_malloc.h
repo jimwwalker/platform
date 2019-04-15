@@ -77,6 +77,7 @@ public:
 #endif
     }
     static void setTCacheEnabled(bool value);
+    static bool releaseFreeMemory();
 
 private:
     static void addAllocation(void* ptr);

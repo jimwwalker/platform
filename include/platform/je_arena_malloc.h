@@ -62,6 +62,7 @@ public:
         return true;
     }
     static void setTCacheEnabled(bool value);
+    static bool releaseFreeMemory();
 
 private:
     static int getFlags();

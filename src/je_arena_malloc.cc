@@ -220,6 +220,22 @@ void JEArenaMalloc::setTCacheEnabled(bool value) {
     tcacheEnabled = value;
 }
 
+#define STRINGIFY_HELPER(x) #x
+#define STRINGIFY(x) STRINGIFY_HELPER(x)
+
+bool JEArenaMalloc::releaseFreeMemory() {
+    /* Note: jemalloc doesn't necessarily free this memory
+     * immediately, but it will schedule to be freed as soon as is
+     * possible.
+     */
+    auto err = je_mallctl("arena." STRINGIFY(MALLCTL_ARENAS_ALL) ".purge",
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          0);
+    return err == 0;
+}
+
 int JEArenaMalloc::getFlags() {
     return currentJeMallocFlags;
 }

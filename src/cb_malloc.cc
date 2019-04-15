@@ -38,10 +38,6 @@
 
 #include <string>
 
-// User-registered new and delete hooks
-cb_malloc_new_hook_t cb_new_hook = nullptr;
-cb_malloc_delete_hook_t cb_delete_hook = nullptr;
-
 PLATFORM_PUBLIC_API void* cb_malloc(size_t size) throw() {
     return cb::ArenaMalloc::malloc(size);
 }
