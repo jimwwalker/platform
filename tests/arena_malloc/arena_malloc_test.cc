@@ -19,9 +19,12 @@
 
 #include <platform/cb_arena_malloc.h>
 #include <platform/cb_malloc.h>
+#include <platform/dirutils.h>
 
 #include <folly/portability/GTest.h>
 
+#include <thread>
+#include <utility>
 #include <vector>
 
 TEST(ArenaMalloc, basicUsage) {
@@ -66,7 +69,7 @@ TEST(ArenaMalloc, totalCounters) {
     std::vector<cb::RelaxedAtomic<int64_t>> totals(10);
     std::vector<std::unique_ptr<void, ArenaMallocFree>> data;
     std::generate(clients.begin(), clients.end(), []() {
-        return cb::ArenaMalloc::registerClient();
+        return cb::ArenaMalloc::registerClient(false);
     });
 
     for (size_t i = 0; i < clients.size(); i++) {
