@@ -156,12 +156,10 @@ TARGET_INCLUDE_DIRECTORIES(platform_headers INTERFACE
 LIST(APPEND PLATFORM_FILES
   src/base64.cc
   src/random.cc
-  src/backtrace.c
   src/byte_buffer_dump.cc
   src/byteorder.c
   src/cb_malloc.cc
   src/cb_time.cc
-  src/cbassert.c
   src/checked_snprintf.cc
   src/crc32c.cc
   src/crc32c_private.h
@@ -180,12 +178,10 @@ LIST(APPEND PLATFORM_FILES
   src/timeutils.cc
   src/uuid.cc
   include/platform/atomic_duration.h
-  include/platform/backtrace.h
   include/platform/base64.h
   include/platform/bitset.h
   include/platform/byte_buffer_dump.h
   include/platform/cb_malloc.h
-  include/platform/cbassert.h
   include/platform/checked_snprintf.h
   include/platform/corestore.h
   include/platform/crc32c.h
@@ -210,6 +206,16 @@ LIST(APPEND PLATFORM_FILES
   include/platform/uuid.h
   ${Platform_BINARY_DIR}/include/platform/visibility.h
 )
+
+add_library(platform_cbassert SHARED
+            src/backtrace.c
+            src/cbassert.c
+            include/platform/backtrace.h
+            include/platform/cbassert.h)
+TARGET_INCLUDE_DIRECTORIES(platform_cbassert PRIVATE include)
+GENERATE_EXPORT_HEADER(platform_cbassert
+                       EXPORT_MACRO_NAME PLATFORM_CBASSERT_PUBLIC_API
+                       EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/include/platform/platform_cbassert-visibility.h)
 
 # platform_so - the 'real' platform shared library containing our various
 # platform abstraction functionality.
@@ -273,7 +279,8 @@ foreach(platform ${platform_VARIANTS})
   # Until all such targets are updated to link directly to Ws2_32, we
   # link publically.
   TARGET_LINK_LIBRARIES(${platform_so} PUBLIC
-    ${COUCHBASE_NETWORK_LIBS})
+    ${COUCHBASE_NETWORK_LIBS}
+    platform_cbassert)
 
 
   TARGET_INCLUDE_DIRECTORIES(${platform_so} PUBLIC include ${FOLLY_INCLUDE_DIR})
@@ -337,7 +344,7 @@ endif (UNIX)
 target_link_libraries(breakpad_wrapper
                       ${BREAKPAD_LIBRARIES} platform_headers)
 
-INSTALL(TARGETS breakpad_wrapper JSON_checker dirutils
+INSTALL(TARGETS breakpad_wrapper JSON_checker dirutils platform_cbassert
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
