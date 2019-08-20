@@ -227,6 +227,9 @@ add_library(platform_so SHARED)
 target_link_libraries(platform_so PUBLIC ${FOLLY_LIBRARIES})
 target_link_libraries(platform_so PRIVATE phosphor)
 
+set_target_properties(platform_so
+                      PROPERTIES COMPILE_FLAGS -ftls-model=initial-exec)
+
 # 'platform' - the library clients should normally link to.
 #
 # 'platform' is a static library, which itself links to the main platform_so
