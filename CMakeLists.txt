@@ -159,7 +159,6 @@ LIST(APPEND PLATFORM_FILES
   src/random.cc
   src/byte_buffer_dump.cc
   src/cb_arena_malloc.cc
-  src/cb_malloc.cc
   src/cb_time.cc
   src/checked_snprintf.cc
   src/crc32c.cc
@@ -177,6 +176,7 @@ LIST(APPEND PLATFORM_FILES
   src/thread.cc
   src/timeutils.cc
   src/uuid.cc
+  src/weak_cb_malloc.cc
   include/platform/atomic_duration.h
   include/platform/base64.h
   include/platform/bitset.h
@@ -343,10 +343,21 @@ foreach(platform ${platform_VARIANTS})
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)
 
-  target_sources(${platform} PRIVATE src/global_new_replacement.cc)
+  target_sources(${platform} PRIVATE
+    src/global_new_replacement.cc)
+
   SET_TARGET_PROPERTIES(${platform} PROPERTIES POSITION_INDEPENDENT_CODE true)
   TARGET_LINK_LIBRARIES(${platform} platform_headers ${platform_so})
 endforeach()
+
+# Code that wants memory tracking via JeArenaMalloc will need to include this
+# archive in there build which will replace the weak_cb_malloc symbols.
+add_library(platform_cb_malloc STATIC src/cb_malloc.cc)
+target_link_libraries(platform_cb_malloc platform_so)
+set_target_properties(platform_cb_malloc PROPERTIES POSITION_INDEPENDENT_CODE true)
+
+target_include_directories(platform_cb_malloc PUBLIC include ${FOLLY_INCLUDE_DIR})
+target_link_libraries(platform_cb_malloc ${MALLOC_LIBRARIES} )
 
 GENERATE_EXPORT_HEADER(platform_so
                        EXPORT_MACRO_NAME PLATFORM_PUBLIC_API
