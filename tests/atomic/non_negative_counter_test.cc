@@ -18,17 +18,24 @@
 #include <platform/backtrace.h>
 #include <folly/portability/GTest.h>
 
-TEST(NonNegativeCounterTest, Increment) {
-    cb::NonNegativeCounter<size_t> nnAtomic(1);
-    ASSERT_EQ(1u, nnAtomic);
+template <typename T>
+class NonNegativeCounterTest : public testing::Test {
+public:
+};
 
+using MyTypes = ::testing::Types<uint8_t, uint16_t, uint32_t, uint64_t>;
+TYPED_TEST_SUITE(NonNegativeCounterTest, MyTypes);
+
+TYPED_TEST(NonNegativeCounterTest, Increment) {
+    cb::NonNegativeCounter<TypeParam> nnAtomic(1);
+    ASSERT_EQ(1u, nnAtomic);
     EXPECT_EQ(2u, ++nnAtomic);
     EXPECT_EQ(2u, nnAtomic++);
     EXPECT_EQ(3u, nnAtomic);
 }
 
-TEST(NonNegativeCounterTest, Add) {
-    cb::NonNegativeCounter<size_t> nnAtomic(1);
+TYPED_TEST(NonNegativeCounterTest, Add) {
+    cb::NonNegativeCounter<TypeParam> nnAtomic(1);
     ASSERT_EQ(1u, nnAtomic);
 
     EXPECT_EQ(3u, nnAtomic += 2);
@@ -43,8 +50,8 @@ TEST(NonNegativeCounterTest, Add) {
     EXPECT_EQ(0u, nnAtomic);
 }
 
-TEST(NonNegativeCounterTest, Decrement) {
-    cb::NonNegativeCounter<size_t> nnAtomic(2);
+TYPED_TEST(NonNegativeCounterTest, Decrement) {
+    cb::NonNegativeCounter<TypeParam> nnAtomic(2);
     ASSERT_EQ(2u, nnAtomic);
 
     EXPECT_EQ(1u, --nnAtomic);
@@ -52,8 +59,8 @@ TEST(NonNegativeCounterTest, Decrement) {
     EXPECT_EQ(0u, nnAtomic);
 }
 
-TEST(NonNegativeCounterTest, Subtract) {
-    cb::NonNegativeCounter<size_t> nnAtomic(4);
+TYPED_TEST(NonNegativeCounterTest, Subtract) {
+    cb::NonNegativeCounter<TypeParam> nnAtomic(4);
     ASSERT_EQ(4u, nnAtomic);
 
     EXPECT_EQ(2u, nnAtomic -= 2);
@@ -65,9 +72,9 @@ TEST(NonNegativeCounterTest, Subtract) {
     EXPECT_EQ(4u, nnAtomic);
 }
 
-// Test that a NonNegativeCounter will clamp to zero.
-TEST(NonNegativeCounterTest, ClampsToZero) {
-    cb::NonNegativeCounter<size_t, cb::ClampAtZeroUnderflowPolicy> nnAtomic(0);
+// Test that a NonNegativeCounter will clamp to zero/max
+TYPED_TEST(NonNegativeCounterTest, Saturate) {
+    cb::NonNegativeCounter<TypeParam, cb::SaturateOverflowPolicy> nnAtomic(0);
 
     EXPECT_EQ(0u, --nnAtomic);
     EXPECT_EQ(0u, nnAtomic--);
@@ -80,23 +87,19 @@ TEST(NonNegativeCounterTest, ClampsToZero) {
     nnAtomic = 5;
     EXPECT_EQ(5u, nnAtomic.fetch_add(-10)); // return previous value
     EXPECT_EQ(0u, nnAtomic); // has been clamped to zero
-}
 
-// Test that attempting to construct or assign a negative value is rejected.
-TEST(NonNegativeCounterTest, ClampsToZeroAssignment) {
-    cb::NonNegativeCounter<size_t, cb::ClampAtZeroUnderflowPolicy> nnAtomic(-1);
-    EXPECT_EQ(0u, nnAtomic) << "Construction with of negative number should clamped to zero";
-
-    // Reset to different value before next test.
-    nnAtomic = 10;
-
-    nnAtomic = -2;
-    EXPECT_EQ(0u, nnAtomic) << "Assignment of negative number should have been clamped to zero";
+    // Now exceed max T
+    nnAtomic = std::numeric_limits<TypeParam>::max();
+    nnAtomic.fetch_add(1);
+    EXPECT_EQ(std::numeric_limits<TypeParam>::max(), nnAtomic);
+    nnAtomic++;
+    EXPECT_EQ(std::numeric_limits<TypeParam>::max(), nnAtomic);
 }
 
 // Test the ThrowException policy.
-TEST(NonNegativeCounterTest, ThrowExceptionPolicy) {
-    cb::NonNegativeCounter<size_t, cb::ThrowExceptionUnderflowPolicy> nnAtomic(0);
+TYPED_TEST(NonNegativeCounterTest, ThrowExceptionPolicy) {
+    cb::NonNegativeCounter<TypeParam, cb::ThrowExceptionOverflowPolicy>
+            nnAtomic(0);
 
     EXPECT_THROW(--nnAtomic, std::underflow_error);
     EXPECT_EQ(0u, nnAtomic);
@@ -111,13 +114,21 @@ TEST(NonNegativeCounterTest, ThrowExceptionPolicy) {
 
     EXPECT_THROW(nnAtomic -= 2, std::underflow_error);
     EXPECT_EQ(0u, nnAtomic);
+
+    // Now exceed max T
+    nnAtomic = std::numeric_limits<TypeParam>::max();
+    EXPECT_THROW(nnAtomic.fetch_add(1), std::overflow_error)
+            << size_t(nnAtomic);
+    EXPECT_THROW(nnAtomic.fetch_sub(-1), std::overflow_error)
+            << size_t(nnAtomic);
+    EXPECT_THROW(nnAtomic++, std::overflow_error) << size_t(nnAtomic);
 }
 
 // Test that ThrowException policy throws an exception which records where
 // the exception was thrown from.
-TEST(NonNegativeCounterTest, ThrowExceptionPolicyBacktrace) {
-    cb::NonNegativeCounter<size_t, cb::ThrowExceptionUnderflowPolicy> nnAtomic(
-            0);
+TYPED_TEST(NonNegativeCounterTest, ThrowExceptionPolicyBacktrace) {
+    cb::NonNegativeCounter<TypeParam, cb::ThrowExceptionOverflowPolicy>
+            nnAtomic(0);
     try {
         cb::backtrace::initialize();
     } catch (const std::exception& exception) {
@@ -142,13 +153,4 @@ TEST(NonNegativeCounterTest, ThrowExceptionPolicyBacktrace) {
                     != std::string::npos)
             << "when verifying exception backtrace: " << backtrace;
     }
-}
-
-// Test that attempting to construct or assign a negative value is rejected.
-TEST(NonNegativeCounterTest, ThrowExceptionPolicyAssignment) {
-    using ThrowingCounter = cb::NonNegativeCounter<size_t, cb::ThrowExceptionUnderflowPolicy>;
-    EXPECT_THROW(ThrowingCounter(-1), std::underflow_error) << "Construction with of negative number should throw";
-
-    ThrowingCounter nnAtomic(10);
-    EXPECT_THROW(nnAtomic = -2, std::underflow_error) << "Assignment of negative number should throw";
 }

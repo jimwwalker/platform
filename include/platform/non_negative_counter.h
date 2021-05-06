@@ -25,54 +25,95 @@
 
 namespace cb {
 
-/// Policy class for handling underflow by clamping the value at zero.
+/// Policy class for handling underflow by saturating at max or 0.
 template <class T>
-struct ClampAtZeroUnderflowPolicy {
+struct SaturateOverflowPolicy {
     using SignedT = typename std::make_signed<T>::type;
 
-    void underflow(T& desired, T current, SignedT arg) {
+    void exceed(T& desired, T current, SignedT arg) {
+        desired = std::numeric_limits<T>::max();
+    }
+
+    void subceed(T& desired, T current, SignedT arg) {
         desired = 0;
     }
 };
+
+template <class T>
+using ClampAtZeroUnderflowPolicy = SaturateOverflowPolicy<T>;
 
 /// Policy class for handling underflow by throwing an exception. Prints the
 /// previous value stored in the counter and the argument (the value that we
 // were attempting to subtract)
 template <class T>
-struct ThrowExceptionUnderflowPolicy {
+struct ThrowExceptionOverflowPolicy {
     using SignedT = typename std::make_signed<T>::type;
 
-    void underflow(T& desired, T current, SignedT arg) {
+    void exceed(T& desired, T current, SignedT arg) {
         using std::to_string;
-        cb::throwWithTrace(std::underflow_error("ThrowExceptionUnderflowPolicy current:" +
-                                   to_string(current) + " arg:" +
-                                   to_string(arg)));
+        cb::throwWithTrace(std::overflow_error(
+                "ThrowExceptionOverflowPolicy operation cannot exceed " +
+                to_string(std::numeric_limits<T>::max()) +
+                " current:" + to_string(current) + " arg:" + to_string(arg)));
+    }
+
+    void subceed(T& desired, T current, SignedT arg) {
+        using std::to_string;
+        cb::throwWithTrace(std::underflow_error(
+                "ThrowExceptionOverflowPolicy operation cannot subceed 0 "
+                "current:" +
+                to_string(current) + " arg:" + to_string(arg)));
     }
 };
 
-// Default NonNegativeCounter OrdereReversedPolicy (if user doesn't explicitly
-// specify otherwise) - use ClampAtZeroUnderflowPolicy for Release builds, and
+template <class T>
+using ThrowExceptionUnderflowPolicy = ThrowExceptionOverflowPolicy<T>;
+
+// Default NonNegativeCounter policy (if user doesn't explicitly
+// specify otherwise) - use SaturateOverflowPolicy for Release builds, and
 // ThrowExceptionPolicy for Pre-Release builds.
 template <class T>
 #if CB_DEVELOPMENT_ASSERTS
-using DefaultUnderflowPolicy = ThrowExceptionUnderflowPolicy<T>;
+using DefaultOverflowPolicy = ThrowExceptionOverflowPolicy<T>;
 #else
-using DefaultUnderflowPolicy = ClampAtZeroUnderflowPolicy<T>;
+using DefaultOverflowPolicy = SaturateOverflowPolicy<T>;
 #endif
 
 /**
- * The NonNegativeCounter class wraps std::atomic<> and prevents it
- * underflowing over overflowing. By default will clamp the value at 0 on
- * underflow, but behaviour can be customized by specifying a different
- * UnderflowPolicy class. Same for overflow.
+ * The NonNegativeCounter class wraps std::atomic<T> and detects
+ * when a modification's result cannot be represented by T. The class requires
+ * that T is an unsigned type and thus "subtraction" cannot take the value below
+ * 0 and "addition" above std::numeric_limits<T>::max(). On detection of a
+ * modification where the result cannot be represented, the behaviour compile
+ * time configurable. When CB_DEVELOPMENT_ASSERTS is defined, violation of the
+ * valid range of the type T will result in an exception. An alternative
+ * behaviour is available, and is the default when CB_DEVELOPMENT_ASSERTS is not
+ * defined and that behaviour is to 'saturate' the result at either
+ * std::numeric_limits<T>::max() or 0 depending on the operation being applied.
  *
- * Even though this counter can only be templated on unsigned types, it has the
- * maximum value of the corresponding signed type. This is because we need to
- * allow and check the addition of negative values.
+ * The definition of overflow/underflow varies, but for the purpose of this
+ * class addition that exceeds std::numeric_limits<T>::max() is overflow and
+ * subtraction that subceeds 0 is underflow. The throwing policy makes use of
+ * std::overflow_eror and std::underflow_error respectively.
+ *
+ * The type T is unsigned, but the class allows modification with signed types.
+ * E.g. Consider the following T=uint8_t operations
+ *   0 + -1    -> Subtraction fails, cannot subceed 0
+ *   0xff + 1  -> Addition fails, cannot exceed max
+ *   0xff + -1 -> Subtraction succeeds and results in 0xfe
+ *   0 - 1     -> Subtraction fails, cannot subceed 0
+ *   0 - -1    -> Addition succeeds and results in 1
+ *   0xff - 1  -> Subtraction succeeds and results in 0xfe
+ *   0xff - -1 -> Addition fails, cannot exceed max
+ *
+ * For the template class configuration 2 parameters are available.
+ * @tparam T
+ * @tparam OverflowPolicy a class that defines what happens when an operation
+ *         attempts to exceed or subceed the limits
  */
 template <typename T,
-          template <class> class UnderflowPolicy = DefaultUnderflowPolicy>
-class NonNegativeCounter : public UnderflowPolicy<T> {
+          template <class> class OverflowPolicy = DefaultOverflowPolicy>
+class NonNegativeCounter : public OverflowPolicy<T> {
     static_assert(
             std::is_unsigned<T>::value,
             "NonNegativeCounter should only be templated over unsigned types");
@@ -101,16 +142,13 @@ public:
     }
 
     void store(T desired) {
-        if (desired > T(std::numeric_limits<SignedT>::max())) {
-            UnderflowPolicy<T>::underflow(desired, load(), desired);
-        }
         value.store(desired, std::memory_order_relaxed);
     }
 
     /**
      * Add 'arg' to the current value. If the new value would underflow (i.e. if
      * arg was negative and current less than arg) then calls underflow() on the
-     * selected UnderflowPolicy.
+     * selected OverflowPolicy.
      *
      * Note: Not marked 'noexcept' as underflow() could throw.
      */
@@ -121,12 +159,12 @@ public:
             if (arg < 0) {
                 desired = current - T(std::abs(arg));
                 if (SignedT(current) + arg < 0) {
-                    UnderflowPolicy<T>::underflow(desired, current, arg);
+                    OverflowPolicy<T>::subceed(desired, current, arg);
                 }
             } else {
                 desired = current + T(arg);
-                if (desired > T(std::numeric_limits<SignedT>::max())) {
-                    UnderflowPolicy<T>::underflow(desired, current, arg);
+                if (desired < T(arg)) {
+                    OverflowPolicy<T>::exceed(desired, current, arg);
                 }
             }
             // Attempt to set the atomic value to desired. If the atomic value
@@ -141,7 +179,7 @@ public:
 
     /**
      * Subtract 'arg' from the current value. If the new value would underflow
-     * then calls underflow() on the selected UnderflowPolicy.
+     * then calls underflow() on the selected OverflowPolicy.
      *
      * Note: Not marked 'noexcept' as underflow() could throw.
      */
@@ -151,13 +189,16 @@ public:
         do {
             if (arg < 0) {
                 desired = current + T(std::abs(arg));
+                if (desired < T(arg)) {
+                    OverflowPolicy<T>::exceed(desired, current, arg);
+                }
             } else {
                 desired = current - T(arg);
+                if (desired < T(arg)) {
+                    OverflowPolicy<T>::subceed(desired, current, arg);
+                }
             }
 
-            if (desired > T(std::numeric_limits<SignedT>::max())) {
-                UnderflowPolicy<T>::underflow(desired, current, arg);
-            }
             // Attempt to set the atomic value to desired. If the atomic value
             // is not the same as current then it has changed during
             // operation. compare_exchange_weak will reload the new value
@@ -211,7 +252,7 @@ public:
             // If we are doing a clamp underflow we can pass in previous,
             // it's already 0 and we are returning 0. If we are going to
             // throw, we want to print previous.
-            UnderflowPolicy<T>::underflow(previous, previous, 1);
+            OverflowPolicy<T>::subceed(previous, previous, 1);
             return 0;
         }
         return previous - 1;
