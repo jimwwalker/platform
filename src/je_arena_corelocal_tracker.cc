@@ -127,6 +127,13 @@ size_t JEArenaCoreLocalTracker::getPreciseAllocated(
 
 size_t JEArenaCoreLocalTracker::getEstimatedAllocated(
         const ArenaMallocClient& client, MemoryDomain domain) {
+    if (domain == MemoryDomain::Secondary &&
+        clientData[client.index]
+                        ->clientDomainEstimatedMemory[size_t(domain)]
+                        .load() < 0) {
+        int* x = 0;
+        *x = 1;
+    }
     return size_t(std::max(int64_t(0),
                            clientData[client.index]
                                    ->clientDomainEstimatedMemory[size_t(domain)]
@@ -142,12 +149,28 @@ void maybeUpdateEstimatedTotalMemUsed(uint8_t index,
                                       MemoryDomain domain,
                                       cb::RelaxedAtomic<int64_t>& counter,
                                       int64_t value) {
-    if (std::abs(value) > clientData[index]->coreThreshold) {
+    if (std::abs(value)) { // clientData[index]->coreThreshold) {
         auto value = counter.exchange(0);
         clientData[index]->clientEstimatedMemory.fetch_add(value);
         clientData[index]
                 ->clientDomainEstimatedMemory[size_t(domain)]
                 .fetch_add(value);
+
+        auto total = clientData[index]
+                             ->clientDomainEstimatedMemory[size_t(
+                                     MemoryDomain::Primary)]
+                             .load();
+        auto stotal = clientData[index]
+                              ->clientDomainEstimatedMemory[size_t(
+                                      MemoryDomain::Secondary)]
+                              .load();
+        if (domain == MemoryDomain::Secondary && stotal < 0) {
+            std::cerr << "Crash for " << stotal << "\n";
+            // > " << clientData[index]->clientEstimatedMemory.load() <<
+            // std::endl;
+            int* x = 0;
+            *x = 1;
+        }
     }
 }
 

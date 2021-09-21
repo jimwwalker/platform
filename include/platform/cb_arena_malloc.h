@@ -136,6 +136,12 @@ public:
         return Impl::setDomain(domain);
     }
 
+    static MemoryDomain getDomain() {
+        auto cDomain = setDomain(MemoryDomain::Primary);
+        Impl::setDomain(cDomain);
+        return cDomain;
+    }
+
     /**
      * Set allocation threshold for the client, the compile time selected
      * tracker will use this value for updating the clients memory used.

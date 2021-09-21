@@ -158,6 +158,18 @@ static int makeArena() {
                 "JEArenaMalloc::makeArena not create arena. rv:" +
                 std::to_string(rv));
     }
+
+    // JWW debugging: create another arena. We will force primary into 3 and
+    // secondary into 2.
+    if (arena == 2) {
+        int rv = je_mallctl("arenas.create", (void*)&arena, &sz, nullptr, 0);
+
+        if (rv != 0) {
+            throw std::runtime_error(
+                    "JEArenaMalloc::makeArena not create arena. rv:" +
+                    std::to_string(rv));
+        }
+    }
     return arena;
 }
 
@@ -211,12 +223,10 @@ MemoryDomain JEArenaMalloc::switchToClient(const ArenaMallocClient& client,
     auto currentDomain = currentClient.domain;
     if (client.index == NoClientIndex) {
         currentClient.setup(
-                client.threadCache && tcacheEnabled ? 0 : MALLOCX_TCACHE_NONE,
-                NoClientIndex,
-                cb::MemoryDomain::None);
+                MALLOCX_TCACHE_NONE, NoClientIndex, cb::MemoryDomain::None);
         return currentDomain;
     }
-
+    tcache = false;
     int tcacheFlags = MALLOCX_TCACHE_NONE;
     // client can change tcache setting via their client object or for a single
     // swicthToClient call.
@@ -232,16 +242,33 @@ MemoryDomain JEArenaMalloc::switchToClient(const ArenaMallocClient& client,
         ThreadLocalData::get().getTCacheID(client);
     }
 
+    // JWW debug: Force the arena based on domain
+    int arena = client.arena;
+    if (domain == cb::MemoryDomain::Primary) {
+        arena = 3;
+    } else if (domain == cb::MemoryDomain::Secondary) {
+        arena = 2;
+    }
+
     // Set the malloc flags to the correct arena + tcache setting and set the
     // client index
     currentClient.setup(
-            MALLOCX_ARENA(client.arena) | tcacheFlags, client.index, domain);
+            MALLOCX_ARENA(arena) | MALLOCX_TCACHE_NONE, client.index, domain);
     return currentDomain;
 }
 
 template <>
 MemoryDomain JEArenaMalloc::setDomain(MemoryDomain domain) {
-    return ThreadLocalData::get().getCurrentClient().setDomain(domain);
+    auto& c = ThreadLocalData::get().getCurrentClient();
+    int arena = 0;
+    if (domain == cb::MemoryDomain::Primary) {
+        arena = 3;
+    } else {
+        arena = 2;
+    }
+    auto d = c.domain;
+    c.setup(MALLOCX_ARENA(arena) | MALLOCX_TCACHE_NONE, c.index, domain);
+    return d;
 }
 
 template <>
@@ -263,14 +290,18 @@ void* JEArenaMalloc::malloc(size_t size) {
     }
     auto c = ThreadLocalData::get().getCurrentClient();
     memAllocated(c.index, c.domain, size);
-    return je_mallocx(size, c.mallocFlags);
+    auto p = je_mallocx(size, c.mallocFlags);
+
+    return p;
 }
 
 template <>
 void* JEArenaMalloc::calloc(size_t nmemb, size_t size) {
     auto c = ThreadLocalData::get().getCurrentClient();
     memAllocated(c.index, c.domain, nmemb * size);
-    return je_mallocx(nmemb * size, c.mallocFlags | MALLOCX_ZERO);
+    auto p = je_mallocx(nmemb * size, c.mallocFlags | MALLOCX_ZERO);
+
+    return p;
 }
 
 template <>
@@ -283,11 +314,13 @@ void* JEArenaMalloc::realloc(void* ptr, size_t size) {
 
     if (!ptr) {
         memAllocated(c.index, c.domain, size);
+        std::cerr << "realloc1 " << ptr << std::endl;
         return je_mallocx(size, c.mallocFlags);
     }
 
     memDeallocated(c.index, c.domain, ptr);
     memAllocated(c.index, c.domain, size);
+    std::cerr << "realloc " << ptr << std::endl;
     return je_rallocx(ptr, size, c.mallocFlags);
 }
 
@@ -298,7 +331,16 @@ void* JEArenaMalloc::aligned_alloc(size_t alignment, size_t size) {
     }
     auto c = ThreadLocalData::get().getCurrentClient();
     memAllocated(c.index, c.domain, size, std::align_val_t{alignment});
-    return je_mallocx(size, c.mallocFlags | MALLOCX_ALIGN(alignment));
+    auto p = je_mallocx(size, c.mallocFlags | MALLOCX_ALIGN(alignment));
+
+    if (((uintptr_t)p & 0xfffull) == 0x280ull &&
+        c.domain == MemoryDomain::Primary) {
+        std::cerr << p << " al_alloc Arena:" << (c.mallocFlags >> 20) - 1
+                  << " domain " << (int)c.domain << std::endl;
+        //    JWW(p);
+    }
+
+    return p;
 }
 
 template <>
@@ -306,6 +348,30 @@ void JEArenaMalloc::free(void* ptr) {
     if (ptr) {
         auto c = ThreadLocalData::get().getCurrentClient();
         memDeallocated(c.index, c.domain, ptr);
+
+        unsigned arena = 0;
+        size_t sz = sizeof(unsigned);
+        int rv = je_mallctl("arenas.lookup", &arena, &sz, &ptr, sizeof(void*));
+
+        if (rv != 0) {
+            throw std::runtime_error("JEArenaMalloc::cannot get arena:" +
+                                     std::to_string(rv));
+        }
+
+        unsigned expectedArena = c.domain == cb::MemoryDomain::Primary ? 3 : 2;
+        if (c.index != NoClientIndex && arena != expectedArena &&
+            c.domain == cb::MemoryDomain::Secondary) {
+            std::cerr << "free in domain:" << (int)c.domain
+                      << " but was "
+                         "allocated in arena:"
+                      << arena;
+            std::cerr << " address:" << ptr << " size:"
+                      << je_sallocx(ptr, 0 /* flags aren't read in this call*/)
+                      << "\n";
+            int* x = 0;
+            *x = 1;
+        }
+
         je_dallocx(ptr, c.mallocFlags);
     }
 }
@@ -321,6 +387,30 @@ void JEArenaMalloc::sized_free(void* ptr, size_t size) {
     if (ptr) {
         auto c = ThreadLocalData::get().getCurrentClient();
         memDeallocated(c.index, c.domain, size);
+
+        unsigned arena = 0;
+        size_t sz = sizeof(unsigned);
+        int rv = je_mallctl("arenas.lookup", &arena, &sz, &ptr, sizeof(void*));
+
+        if (rv != 0) {
+            throw std::runtime_error("JEArenaMalloc::cannot get arena:" +
+                                     std::to_string(rv));
+        }
+
+        unsigned expectedArena = c.domain == cb::MemoryDomain::Primary ? 3 : 2;
+        if (c.index != NoClientIndex && arena != expectedArena &&
+            c.domain == cb::MemoryDomain::Secondary) {
+            std::cerr << "sized_free in domain:" << (int)c.domain
+                      << " but was "
+                         "allocated in arena:"
+                      << arena;
+            std::cerr << " address:" << ptr << " size:"
+                      << je_sallocx(ptr, 0 /* flags aren't read in this call*/)
+                      << "\n";
+            int* x = 0;
+            *x = 1;
+        }
+
         je_sdallocx(ptr, size, c.mallocFlags);
     }
 }
@@ -339,6 +429,12 @@ bool JEArenaMalloc::setTCacheEnabled(bool value) {
 
 template <>
 bool JEArenaMalloc::getProperty(const char* name, size_t& value) {
+    if (name == nullptr) {
+        auto c = ThreadLocalData::get().getCurrentClient();
+        value = (size_t)c.index;
+        return true;
+    }
+
     size_t size = sizeof(size_t);
     return je_mallctl(name, &value, &size, nullptr, 0);
 }
