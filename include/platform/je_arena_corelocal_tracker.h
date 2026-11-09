@@ -84,8 +84,12 @@ public:
      * Notify that memory was de-allocated by the client
      * @param index The index for the client who did the deallocation
      * @param ptr The allocation being deallocated
+     * @return the usable size of the allocation (as looked up for the
+     *         accounting) if the client is tracked, so the caller can use a
+     *         sized deallocation and avoid a second lookup. 0 if the client
+     *         is not tracked and no lookup was made.
      */
-    static void memDeallocated(uint8_t index, MemoryDomain domain, void* ptr);
+    static size_t memDeallocated(uint8_t index, MemoryDomain domain, void* ptr);
 
     /**
      * Notify that memory was de-allocated by the client

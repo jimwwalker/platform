@@ -12,10 +12,29 @@
 
 #include <platform/sysinfo.h>
 
+#include <folly/concurrency/CacheLocality.h>
+
+#include <atomic>
+#include <cassert>
 #include <vector>
 
 using CountFnType = size_t (*)();
 using IndexFnType = size_t (*)(size_t);
+
+namespace cb {
+/**
+ * Inline equivalent of cb::stripe_for_current_cpu (sysinfo.h). Used as the
+ * default IndexFn of CoreStore so that the stripe lookup (a thread-local
+ * cached cpu id and a table lookup) is inlined into CoreStore::get() rather
+ * than being an out-of-line call on every access.
+ *
+ * @param numStripes number of stripes
+ * @return stripe index for the current cpu core, < numStripes
+ */
+inline size_t stripe_for_current_cpu_inline(size_t numStripes) {
+    return folly::AccessSpreader<std::atomic>::cachedCurrent(numStripes);
+}
+} // namespace cb
 
 /**
  * Store T to an element associated with the current "core" (cb::get_cpu_index)
@@ -39,7 +58,7 @@ using IndexFnType = size_t (*)(size_t);
  */
 template <typename T,
           CountFnType CountFn = cb::get_cpu_count,
-          IndexFnType IndexFn = cb::stripe_for_current_cpu>
+          IndexFnType IndexFn = cb::stripe_for_current_cpu_inline>
 class CoreStore {
 public:
     using const_iterator = typename std::vector<T>::const_iterator;
@@ -49,7 +68,11 @@ public:
     }
 
     T& get() {
-        return coreArray.at(IndexFn(coreArray.size()));
+        // IndexFn guarantees a result < numStripes, so no bounds check (and
+        // no throw path) is needed on this hot path.
+        const auto index = IndexFn(coreArray.size());
+        assert(index < coreArray.size());
+        return coreArray[index];
     }
 
     [[nodiscard]] size_t size() const {

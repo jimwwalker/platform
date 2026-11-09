@@ -456,8 +456,14 @@ void JEArenaMalloc::free(void* ptr) {
         if (arenaDebugChecksEnabled()) {
             verifyMemDeallocatedByCorrectClient(c, ptr, je_sallocx(ptr, 0));
         }
-        memDeallocated(c.index, c.domain, ptr);
-        je_dallocx(ptr, c.getMallocFlags());
+        // The tracker has already looked up the allocation's size; reuse it
+        // for a sized deallocation so jemalloc doesn't look it up again.
+        const auto size = memDeallocated(c.index, c.domain, ptr);
+        if (size != 0) [[likely]] {
+            je_sdallocx(ptr, size, c.getMallocFlags());
+        } else {
+            je_dallocx(ptr, c.getMallocFlags());
+        }
     }
 }
 

@@ -89,13 +89,14 @@ void JEArenaSimpleTracker::memAllocated(uint8_t index,
     counter.fetch_add(size);
 }
 
-void JEArenaSimpleTracker::memDeallocated(uint8_t index,
-                                          MemoryDomain domain,
-                                          void* ptr) {
+size_t JEArenaSimpleTracker::memDeallocated(uint8_t index,
+                                            MemoryDomain domain,
+                                            void* ptr) {
     auto size = je_sallocx(ptr, 0 /* flags aren't read in this call*/);
     auto& clientData = allocated.at(index);
     auto& counter = clientData.at(uint8_t(domain));
     counter.fetch_sub(size);
+    return size;
 }
 
 void JEArenaSimpleTracker::memDeallocated(uint8_t index,

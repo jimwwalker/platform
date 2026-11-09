@@ -158,9 +158,13 @@ protected:
      *
      * @param index The index for the client who did the deallocation
      * @param ptr The allocation being deallocated
+     * @return the usable size of the allocation if the tracker looked it up
+     *         (so the caller can use a sized deallocation), else 0.
      */
-    static void memDeallocated(uint8_t index, MemoryDomain domain, void* ptr) {
-        trackingImpl::memDeallocated(index, domain, ptr);
+    static size_t memDeallocated(uint8_t index,
+                                 MemoryDomain domain,
+                                 void* ptr) {
+        return trackingImpl::memDeallocated(index, domain, ptr);
     }
 
     /**

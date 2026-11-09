@@ -8,12 +8,7 @@
  *   the file licenses/APL2.txt.
  */
 
-#include "relaxed_atomic.h"
-#include <folly/lang/Aligned.h>
-#include <gsl/gsl-lite.hpp>
-#include <platform/corestore.h>
 #include <platform/je_arena_corelocal_tracker.h>
-#include <platform/non_negative_counter.h>
 #include <platform/unshared.h>
 
 #include <jemalloc/jemalloc.h>
@@ -27,41 +22,42 @@ struct ClientData {
     Unshared<MemoryDomain> allocated;
 };
 
-// The client counters are stored cache-aligned, with one per client.
-static std::array<folly::cacheline_aligned<ClientData>, ArenaMallocMaxClients>
-        clientData;
+// The client counters, one per client. Unshared is itself cache line aligned
+// (and sized) so adjacent clients never share a line.
+static_assert(alignof(ClientData) == CachelineAlign);
+static std::array<ClientData, ArenaMallocMaxClients> clientData;
 
 void JEArenaCoreLocalTracker::clientRegistered(const ArenaMallocClient& client,
                                                bool arenaDebugChecksEnabled) {
     // CoreLocalTracker doesn't support debug checks.
     (void)arenaDebugChecksEnabled;
-    clientData[client.index]->allocated.reset();
+    clientData[client.index].allocated.reset();
     setAllocatedThreshold(client);
 }
 
 size_t JEArenaCoreLocalTracker::getPreciseAllocated(
         const ArenaMallocClient& client) {
-    return clientData[client.index]->allocated.getPreciseSum();
+    return clientData[client.index].allocated.getPreciseSum();
 }
 
 size_t JEArenaCoreLocalTracker::getEstimatedAllocated(
         const ArenaMallocClient& client) {
-    return clientData[client.index]->allocated.getEstimateSum();
+    return clientData[client.index].allocated.getEstimateSum();
 }
 
 size_t JEArenaCoreLocalTracker::getPreciseAllocated(
         const ArenaMallocClient& client, MemoryDomain domain) {
-    return clientData[client.index]->allocated.getPrecise(domain);
+    return clientData[client.index].allocated.getPrecise(domain);
 }
 
 size_t JEArenaCoreLocalTracker::getEstimatedAllocated(
         const ArenaMallocClient& client, MemoryDomain domain) {
-    return clientData[client.index]->allocated.getEstimate(domain);
+    return clientData[client.index].allocated.getEstimate(domain);
 }
 
 void JEArenaCoreLocalTracker::setAllocatedThreshold(
         const ArenaMallocClient& client) {
-    clientData[client.index]->allocated.setCoreThreshold(
+    clientData[client.index].allocated.setCoreThreshold(
             client.estimateUpdateThreshold);
 }
 
@@ -69,30 +65,32 @@ void JEArenaCoreLocalTracker::memAllocated(uint8_t index,
                                            MemoryDomain domain,
                                            size_t size,
                                            std::align_val_t alignment) {
-    if (index != NoClientIndex) {
+    if (index != NoClientIndex) [[likely]] {
         const int flags = (alignment > std::align_val_t{0})
                                   ? MALLOCX_ALIGN(alignment)
                                   : 0;
         size = je_nallocx(size, flags);
-        clientData[index]->allocated.add(size, domain);
+        clientData[index].allocated.add(size, domain);
     }
 }
 
-void JEArenaCoreLocalTracker::memDeallocated(uint8_t index,
-                                             MemoryDomain domain,
-                                             void* ptr) {
-    if (index != NoClientIndex) {
+size_t JEArenaCoreLocalTracker::memDeallocated(uint8_t index,
+                                               MemoryDomain domain,
+                                               void* ptr) {
+    if (index != NoClientIndex) [[likely]] {
         auto size = je_sallocx(ptr, 0 /* flags aren't read in this call*/);
-        clientData[index]->allocated.sub(size, domain);
+        clientData[index].allocated.sub(size, domain);
+        return size;
     }
+    return 0;
 }
 
 void JEArenaCoreLocalTracker::memDeallocated(uint8_t index,
                                              MemoryDomain domain,
                                              size_t size) {
-    if (index != NoClientIndex) {
+    if (index != NoClientIndex) [[likely]] {
         size = je_nallocx(size, 0 /* flags aren't read in this call*/);
-        clientData[index]->allocated.sub(size, domain);
+        clientData[index].allocated.sub(size, domain);
     }
 }
 
