@@ -24,8 +24,16 @@ class RelaxedAtomic;
 struct ArenaMallocClient;
 
 /**
- * "plugin" Tracker for JEArenaMalloc utilising je_sallocx and CoreLocal
- * for tracking allocations.
+ * "plugin" Tracker for JEArenaMalloc, used in production (NDEBUG) builds.
+ *
+ * Each thread counts the bytes it allocates and deallocates for each client
+ * in counters only it writes, so accounting for an allocation costs a few
+ * unlocked instructions and writes no shared memory. The precise value is
+ * the sum over all threads; the estimate is a single counter per client and
+ * domain which threads update when their contribution has changed by more
+ * than a threshold. See je_arena_corelocal_tracker.cc for the design.
+ *
+ * The name is historical: earlier versions kept the counters per core.
  */
 class JEArenaCoreLocalTracker {
 public:
@@ -35,8 +43,8 @@ public:
     static void initialiseForNewThread(const ArenaMallocClient& client);
 
     /**
-     * Update the threshold at which the per thread counter will synchronise
-     * into the client total estimate.
+     * Update the threshold (the client's estimateUpdateThreshold) which
+     * bounds how far the client's estimate may lag the precise value.
      */
     static void setAllocatedThreshold(const ArenaMallocClient& client);
 
@@ -45,17 +53,33 @@ public:
     }
 
     /**
-     * Return the precise memory used by the client, this triggers an
-     * accumulation of each core local counter and will effect the returned
-     * value from getEstimatedAllocated.
+     * Choose whether the threshold each thread applies is scaled down when
+     * more threads than cpus are allocating. Enabled (the default), the lag
+     * of the estimate is bounded by estimateUpdateThreshold multiplied by
+     * the cpu count; disabled, every thread applies estimateUpdateThreshold
+     * itself and the bound is that multiplied by the number of threads.
+     *
+     * Exists so the two can be compared by platform-arena_tracking_bench on
+     * the deployment platforms; expected to be removed once one is chosen.
+     *
+     * @param enabled true to scale the thresholds
+     * @return the previous setting
+     */
+    static bool setThresholdScalingEnabled(bool enabled);
+
+    /**
+     * Return the precise memory used by the client. This sums the counters
+     * of every thread and brings the value returned by getEstimatedAllocated
+     * up to date as a side effect.
      */
     static size_t getPreciseAllocated(const ArenaMallocClient& client);
 
     /**
-     * Return the estimated memory used by the client, this is an efficient read
-     * of a single counter but can be ahead or behind the 'precise' value. The
-     * lag should be bounded by the client's configured estimateUpdateThreshold
-     * multiplied by the number of cores returned by cb::get_cpu_count
+     * Return the estimated memory used by the client, this is an efficient
+     * read of a single counter per domain but can be ahead or behind the
+     * 'precise' value. The lag is bounded by the client's configured
+     * estimateUpdateThreshold multiplied by the number of cores returned by
+     * cb::get_cpu_count
      */
     static size_t getEstimatedAllocated(const ArenaMallocClient& client);
 
