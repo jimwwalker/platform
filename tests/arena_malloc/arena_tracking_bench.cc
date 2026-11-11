@@ -58,7 +58,26 @@ public:
     }
 };
 
-using BenchJEArenaMalloc = TestJEArenaMalloc<cb::JEArenaCoreLocalTracker>;
+// Drive the tracker the build is configured to use for non-debug builds
+#if defined(CB_ARENA_THREAD_LOCAL_TRACKER)
+using BenchTracker = cb::JEArenaThreadLocalTracker;
+#else
+using BenchTracker = cb::JEArenaCoreLocalTracker;
+#endif
+using BenchJEArenaMalloc = TestJEArenaMalloc<BenchTracker>;
+
+/**
+ * Choose how the tracker applies the client's threshold, see
+ * JEArenaThreadLocalTracker::setThresholdScalingEnabled. No effect with
+ * JEArenaCoreLocalTracker, which has one way only.
+ */
+static void setThresholdScaling(bool enabled) {
+#if defined(CB_ARENA_THREAD_LOCAL_TRACKER)
+    cb::JEArenaThreadLocalTracker::setThresholdScalingEnabled(enabled);
+#else
+    (void)enabled;
+#endif
+}
 
 class MemoryAllocationStat : public benchmark::Fixture {
 public:
@@ -390,6 +409,57 @@ BENCHMARK_DEFINE_F(ArenaMalloc, EstimateReadUnderLoad)
     state.SetItemsProcessed(state.iterations());
 }
 
+/**
+ * MallocFree with the client's estimateUpdateThreshold set explicitly, as
+ * kv_engine derives it from the bucket quota rather than using the default.
+ * The cost of large allocations is dominated by how often the threshold is
+ * crossed, so this is the benchmark to use when comparing how the tracker
+ * applies the threshold.
+ * range(0) - allocation size
+ * range(1) - allocations held before freeing (batch size)
+ * range(2) - estimateUpdateThreshold in KiB
+ * range(3) - 1 if the tracker should scale the threshold by the number of
+ *            threads (see setThresholdScaling). Both values measure the same
+ *            thing when the build uses JEArenaCoreLocalTracker.
+ */
+BENCHMARK_DEFINE_F(ArenaMalloc, MallocFreeThreshold)(benchmark::State& state) {
+    std::vector<void*> pointers(state.range(1));
+    cb::JEArenaMalloc::switchToClient(
+            clientFor(state, 1), cb::MemoryDomain::Primary, true);
+    size_t items = 0;
+    for (auto _ : state) {
+        items += allocateAndFree<false>(pointers, state.range(0));
+    }
+    cb::JEArenaMalloc::switchFromClient();
+    state.SetItemsProcessed(items);
+}
+
+static void thresholdSetup(const benchmark::State& state) {
+    arenaMallocSetup(state);
+    setThresholdScaling(state.range(3) != 0);
+    auto& client = benchClients.front();
+    client.estimateUpdateThreshold =
+            static_cast<uint32_t>(state.range(2)) * 1024;
+    cb::JEArenaMalloc::setAllocatedThreshold(client);
+}
+
+static void thresholdTeardown(const benchmark::State& state) {
+    setThresholdScaling(true);
+    arenaMallocTeardown(state);
+}
+
+// Thresholds: the default (100KiB) and values typical of 1GiB and 16GiB
+// quotas on a 16 core machine. Each with scaling on and off.
+static void thresholdArgs(benchmark::internal::Benchmark* bench) {
+    for (const int64_t scaling : {1, 0}) {
+        for (const int64_t thresholdKiB : {100, 512, 4096}) {
+            bench->Args({64, 64, thresholdKiB, scaling});
+            bench->Args({4096, 16, thresholdKiB, scaling});
+            bench->Args({32768, 8, thresholdKiB, scaling});
+        }
+    }
+}
+
 // Allocation sizes: a small object, a typical document sized allocation and a
 // 'large' allocation beyond the thread cache's default limit. Batch of 64 is
 // enough to exercise the tcache fill/flush paths.
@@ -432,6 +502,13 @@ BENCHMARK_REGISTER_F(ArenaMalloc, MallocFreeEstimateRead)
         ->Args({64, 8})
         ->Setup(arenaMallocSetup)
         ->Teardown(arenaMallocTeardown)
+        ->Threads(cpuCount)
+        ->Threads(cpuCount * 4);
+
+BENCHMARK_REGISTER_F(ArenaMalloc, MallocFreeThreshold)
+        ->Apply(thresholdArgs)
+        ->Setup(thresholdSetup)
+        ->Teardown(thresholdTeardown)
         ->Threads(cpuCount)
         ->Threads(cpuCount * 4);
 

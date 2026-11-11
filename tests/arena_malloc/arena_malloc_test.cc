@@ -12,6 +12,7 @@
 #include <folly/portability/GTest.h>
 #include <platform/cb_arena_malloc.h>
 #include <platform/cb_malloc.h>
+#include <atomic>
 #include <cstdlib>
 #include <thread>
 #include <vector>
@@ -626,5 +627,206 @@ TEST_F(ArenaMalloc, ThreadDestroyWhenTcacheStillAssigned) {
     t1.join();
     t2.join();
 
+    cb::ArenaMalloc::unregisterClient(client);
+}
+
+// Memory allocated by one thread and freed by another must net to zero, and
+// must remain accounted for after the allocating thread has exited.
+TEST_F(ArenaMalloc, AllocateAndFreeOnDifferentThreads) {
+    auto client = cb::ArenaMalloc::registerClient(false);
+    const size_t allocations = 100;
+    const size_t allocationSize = 256;
+    std::vector<void*> pointers(allocations);
+
+    std::thread allocator{[&client, &pointers]() {
+        cb::ArenaMalloc::switchToClient(client);
+        for (auto& pointer : pointers) {
+            pointer = cb_malloc(allocationSize);
+        }
+        cb::ArenaMalloc::switchFromClient();
+    }};
+    allocator.join();
+
+    // The allocating thread has gone, its allocations have not.
+    EXPECT_EQ(allocations * allocationSize,
+              cb::ArenaMalloc::getPreciseAllocated(client));
+
+    std::thread deallocator{[&client, &pointers]() {
+        cb::ArenaMalloc::switchToClient(client);
+        for (size_t index = 0; index < pointers.size() / 2; index++) {
+            cb_free(pointers[index]);
+        }
+        cb::ArenaMalloc::switchFromClient();
+    }};
+    deallocator.join();
+    EXPECT_EQ((allocations / 2) * allocationSize,
+              cb::ArenaMalloc::getPreciseAllocated(client));
+
+    // And the remainder from this thread
+    cb::ArenaMalloc::switchToClient(client);
+    for (size_t index = pointers.size() / 2; index < pointers.size(); index++) {
+        cb_free(pointers[index]);
+    }
+    cb::ArenaMalloc::switchFromClient();
+    EXPECT_EQ(0, cb::ArenaMalloc::getPreciseAllocated(client));
+    EXPECT_EQ(0, cb::ArenaMalloc::getEstimatedAllocated(client));
+    cb::ArenaMalloc::unregisterClient(client);
+}
+
+// A thread which exits must leave nothing behind which the estimate has not
+// seen, even when it allocated less than the threshold. True of the always
+// precise trackers and of JEArenaThreadLocalTracker, but not of
+// JEArenaCoreLocalTracker, where what a thread has not flushed stays with
+// the core it ran on.
+TEST_F(ArenaMalloc, ThreadExitUpdatesEstimate) {
+#if !defined(CB_ARENA_THREAD_LOCAL_TRACKER)
+    if (!cb::ArenaMalloc::isTrackingAlwaysPrecise()) {
+        // JEArenaCoreLocalTracker, test not applicable.
+        return;
+    }
+#endif
+    auto client = cb::ArenaMalloc::registerClient(false);
+    client.estimateUpdateThreshold = 1024 * 1024;
+    cb::ArenaMalloc::setAllocatedThreshold(client);
+
+    void* pointer = nullptr;
+    std::thread allocator{[&client, &pointer]() {
+        cb::ArenaMalloc::switchToClient(client);
+        pointer = cb_malloc(512);
+        cb::ArenaMalloc::switchFromClient();
+    }};
+    allocator.join();
+
+    // No precise read has been made, so only the thread's exit can have
+    // updated the estimate.
+    EXPECT_EQ(512, cb::ArenaMalloc::getEstimatedAllocated(client));
+    EXPECT_EQ(512,
+              cb::ArenaMalloc::getEstimatedAllocated(
+                      client, cb::MemoryDomain::Primary));
+    EXPECT_EQ(512, cb::ArenaMalloc::getPreciseAllocated(client));
+
+    cb::ArenaMalloc::switchToClient(client);
+    cb_free(pointer);
+    cb::ArenaMalloc::switchFromClient();
+    EXPECT_EQ(0, cb::ArenaMalloc::getPreciseAllocated(client));
+    cb::ArenaMalloc::unregisterClient(client);
+}
+
+// Many threads allocating and freeing (in both domains, handing some memory
+// to the next thread to free) whilst precise and estimate reads are made.
+// Once the threads are done everything must net to zero.
+TEST_F(ArenaMalloc, ConcurrentAllocateFreeAndRead) {
+    auto client = cb::ArenaMalloc::registerClient(false);
+    client.estimateUpdateThreshold = 4096;
+    cb::ArenaMalloc::setAllocatedThreshold(client);
+
+    const size_t threadCount = 8;
+    const size_t iterations = 2000;
+    // Each thread leaves one allocation for the next thread to free.
+    std::vector<void*> handover(threadCount);
+    std::atomic<bool> stop{false};
+    std::atomic<size_t> ready{0};
+    std::atomic<bool> go{false};
+
+    std::vector<std::thread> threads;
+    for (size_t thread = 0; thread < threadCount; thread++) {
+        threads.emplace_back([&, thread]() {
+            const auto domain = (thread % 2) ? cb::MemoryDomain::Secondary
+                                             : cb::MemoryDomain::Primary;
+            cb::ArenaMalloc::switchToClient(client, domain);
+            ready++;
+            while (!go) {
+                std::this_thread::yield();
+            }
+            for (size_t iteration = 0; iteration < iterations; iteration++) {
+                auto* small = cb_malloc(48 + (iteration % 200));
+                auto* large = cb_malloc(8192 + iteration);
+                cb_free(small);
+                cb_sized_free(large, 8192 + iteration);
+            }
+            handover[thread] = cb_malloc(1000);
+            cb::ArenaMalloc::switchFromClient();
+        });
+    }
+
+    std::thread reader{[&]() {
+        while (!stop) {
+            cb::ArenaMalloc::getPreciseAllocated(client);
+            cb::ArenaMalloc::getEstimatedAllocated(client);
+            cb::ArenaMalloc::getPreciseAllocated(client,
+                                                 cb::MemoryDomain::Secondary);
+        }
+    }};
+
+    while (ready != threadCount) {
+        std::this_thread::yield();
+    }
+    go = true;
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    stop = true;
+    reader.join();
+
+    // Only the handed over allocations remain (1000 bytes is a 1024 class)
+    EXPECT_EQ(threadCount * 1024, cb::ArenaMalloc::getPreciseAllocated(client));
+    EXPECT_EQ(threadCount * 1024,
+              cb::ArenaMalloc::getEstimatedAllocated(client));
+    EXPECT_EQ((threadCount / 2) * 1024,
+              cb::ArenaMalloc::getPreciseAllocated(client,
+                                                   cb::MemoryDomain::Primary));
+
+    // Free each from the domain it was allocated in
+    for (size_t thread = 0; thread < threadCount; thread++) {
+        cb::ArenaMalloc::switchToClient(client,
+                                        (thread % 2)
+                                                ? cb::MemoryDomain::Secondary
+                                                : cb::MemoryDomain::Primary);
+        cb_free(handover[thread]);
+        cb::ArenaMalloc::switchFromClient();
+    }
+    for (size_t domain = 0; domain < size_t(cb::MemoryDomain::Count);
+         domain++) {
+        EXPECT_EQ(0,
+                  cb::ArenaMalloc::getPreciseAllocated(
+                          client, cb::MemoryDomain(domain)));
+        EXPECT_EQ(0,
+                  cb::ArenaMalloc::getEstimatedAllocated(
+                          client, cb::MemoryDomain(domain)));
+    }
+    cb::ArenaMalloc::unregisterClient(client);
+}
+
+// The amount accounted for an allocation must be the size the allocator
+// really provided, for every small size and around larger size classes, and
+// a sized free must account for exactly the same amount.
+TEST_F(ArenaMalloc, AccountedSizeMatchesUsableSize) {
+    auto client = cb::ArenaMalloc::registerClient(false);
+    std::vector<size_t> sizes;
+    for (size_t size = 1; size <= 5000; size++) {
+        sizes.push_back(size);
+    }
+    for (size_t size = 8192; size <= 8 * 1024 * 1024; size *= 2) {
+        sizes.push_back(size - 1);
+        sizes.push_back(size);
+        sizes.push_back(size + 1);
+    }
+
+    cb::ArenaMalloc::switchToClient(client);
+    for (const auto size : sizes) {
+        auto* pointer = cb_malloc(size);
+        const auto usable = cb_malloc_usable_size(pointer);
+        ASSERT_EQ(usable, cb::ArenaMalloc::getPreciseAllocated(client))
+                << "malloc size:" << size;
+        cb_sized_free(pointer, size);
+        ASSERT_EQ(0, cb::ArenaMalloc::getPreciseAllocated(client))
+                << "sized_free size:" << size;
+
+        pointer = cb_malloc(size);
+        cb_free(pointer);
+        ASSERT_EQ(0, cb::ArenaMalloc::getPreciseAllocated(client))
+                << "free size:" << size;
+    }
+    cb::ArenaMalloc::switchFromClient();
     cb::ArenaMalloc::unregisterClient(client);
 }

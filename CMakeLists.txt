@@ -349,6 +349,7 @@ endif()
 
 if (MEMORY_ALLOCATOR STREQUAL "jemalloc")
     target_sources(platform PRIVATE src/je_arena_corelocal_tracker.cc)
+    target_sources(platform PRIVATE src/je_arena_threadlocal_tracker.cc)
     target_sources(platform PRIVATE src/je_arena_simple_tracker.cc)
     target_sources(platform PRIVATE src/je_arena_malloc.cc)
     target_sources(platform PRIVATE src/je_arena_malloc_stats.cc)
@@ -359,7 +360,23 @@ if (MEMORY_ALLOCATOR STREQUAL "jemalloc")
     # name.
     set_source_files_properties(
             src/je_arena_corelocal_tracker.cc
+            src/je_arena_threadlocal_tracker.cc
             PROPERTIES SKIP_UNITY_BUILD_INCLUSION 1)
+
+    # Which tracker non-debug builds use to account for the memory allocated
+    # by each cb::ArenaMalloc client. The definition is public as the choice
+    # is made in platform/je_arena_malloc.h, so every user of that header
+    # must agree with the library.
+    # ON selects JEArenaThreadLocalTracker, OFF JEArenaCoreLocalTracker.
+    option(CB_ARENA_THREAD_LOCAL_TRACKER
+           "Track arena memory with per-thread (rather than per-core) counters"
+           ON)
+    if (CB_ARENA_THREAD_LOCAL_TRACKER)
+        target_compile_definitions(platform
+                PUBLIC CB_ARENA_THREAD_LOCAL_TRACKER=1)
+        target_compile_definitions(platform_headers
+                INTERFACE CB_ARENA_THREAD_LOCAL_TRACKER=1)
+    endif ()
 endif ()
 # Always build the system_arena code for simpler concurrent development
 target_sources(platform PRIVATE src/system_arena_malloc.cc)

@@ -13,6 +13,7 @@
 #include <platform/cb_arena_malloc_client.h>
 #include <platform/je_arena_corelocal_tracker.h>
 #include <platform/je_arena_simple_tracker.h>
+#include <platform/je_arena_threadlocal_tracker.h>
 
 #include <unordered_map>
 
@@ -183,11 +184,17 @@ protected:
 #ifndef NDEBUG
 // For debug builds, use JEArenaSimpleTracker - slower, but with additional
 // sanity checks.
-using JEArenaMalloc = _JEArenaMalloc<JEArenaSimpleTracker>;
+using JEArenaTracker = JEArenaSimpleTracker;
+#elif defined(CB_ARENA_THREAD_LOCAL_TRACKER)
+// For non-debug builds, use JEArenaThreadLocalTracker (per-thread counters) -
+// higher performance, but with very limited sanity checks.
+using JEArenaTracker = JEArenaThreadLocalTracker;
 #else
-// For non-debug builds, use JEArenaCoreLocalTracker - higher performance,
-// but with very limited sanity checks.
-using JEArenaMalloc = _JEArenaMalloc<JEArenaCoreLocalTracker>;
+// Non-debug builds configured with -DCB_ARENA_THREAD_LOCAL_TRACKER=OFF use
+// JEArenaCoreLocalTracker (per-core counters).
+using JEArenaTracker = JEArenaCoreLocalTracker;
 #endif
+
+using JEArenaMalloc = _JEArenaMalloc<JEArenaTracker>;
 
 } // namespace cb

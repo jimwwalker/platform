@@ -42,7 +42,7 @@ enum class MemoryDomain : uint8_t { Primary, Secondary, Count, None = Count };
 std::ostream& operator<<(std::ostream& os, const MemoryDomain& md);
 
 // Map from MemoryDomain to the Arena to use for that domain. In production
-// (NDEBUG) builds we use JEArenaCoreLocalTracker which always uses the same
+// (NDEBUG) builds we use JEArenaThreadLocalTracker which always uses the same
 // arena for all domains owned by a given client (to minimise arena usage),
 // in Debug builds we use JEArenaSimpleTracker, which (if enabled at runtime via
 // env var) can assign one arena per domain to allow us to check that memory
